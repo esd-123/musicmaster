@@ -21,8 +21,10 @@ export async function lookupBpm(
   const apiKey = process.env.GETSONGBPM_API_KEY;
   if (!apiKey) return null;
 
+  // type=both is required for the combined "song:X artist:Y" lookup syntax —
+  // type=song expects a bare title with no artist filter at all.
   const lookup = `song:${trackTitle} artist:${artist}`;
-  const url = `https://api.getsong.co/search/?api_key=${apiKey}&type=song&lookup=${encodeURIComponent(lookup)}`;
+  const url = `https://api.getsong.co/search/?api_key=${apiKey}&type=both&lookup=${encodeURIComponent(lookup)}`;
 
   const res = await fetch(url);
   if (!res.ok) return null;
