@@ -5,10 +5,11 @@ A household tool for browsing a vinyl collection synced from Discogs, tagging/ra
 ## Features
 
 - **Discogs sync** — daily automatic sync of your collection (`src/lib/discogs/`), plus a manual trigger at `POST /api/sync`.
-- **Genre/mood/BPM organization** — genres/styles pulled from Discogs; BPM pulled from GetSongBPM (never manually entered); moods/tags are yours to add per record.
-- **Enrichment** — Wikipedia, MusicBrainz, and (optionally) Last.fm summaries/tags fetched automatically after each sync (`src/lib/enrichment/`).
+- **Genre/mood organization** — genres/styles pulled from Discogs, organized into a hand-curated genre/style hierarchy you can edit at `/genre-editor`; moods/tags are yours to add per record.
+- **Mood axes** — every record is scored on three continuous axes (approachability, valence, density); edit them by hand at `/mood-editor` (2D drag panels) or browse the whole collection in 3D at `/mood-cube`.
+- **Enrichment** — Wikipedia, MusicBrainz, Apple Music links, and (optionally) Last.fm summaries/tags fetched automatically after each sync (`src/lib/enrichment/`); records without a matched Apple Music album fall back to a YouTube search link.
 - **Natural-language query** (`/query`) — "friends over, want something fun but not too uptempo" → a handful of picks via Claude.
-- **Now Playing page** (`/releases/[id]`) — tracklist, critical reception, your rating/notes/tags, full play history, and "if you like this, you may also like" recommendations.
+- **Now Playing page** (`/releases/[id]`) — tracklist, critical reception, your rating/notes/tags, an Apple Music/YouTube link, full play history, and "if you like this, you may also like" recommendations.
 
 ## Local development
 
@@ -33,7 +34,6 @@ See `.env.example` for the full list. Required for core functionality:
 
 - `DISCOGS_TOKEN`, `DISCOGS_USERNAME` — [discogs.com/settings/developers](https://www.discogs.com/settings/developers)
 - `ANTHROPIC_API_KEY` — for the `/query` natural-language feature
-- `GETSONGBPM_API_KEY` — for BPM lookups ([getsongbpm.com/api](https://getsongbpm.com/api)); without it, BPM stays empty
 - `LASTFM_API_KEY` — optional, adds an extra enrichment source ([last.fm/api/account/create](https://www.last.fm/api/account/create))
 
 ## Deploying on a home server (Docker)
@@ -50,7 +50,3 @@ This builds the image, creates a named volume (`musicmaster-data`) for the SQLit
 **Note:** the Dockerfile and compose file were written and migration-tested (`scripts/migrate.mjs`, twice, against a fresh database) but not build-tested end-to-end, since this development machine doesn't have Docker installed. Run `docker compose up -d --build` on the actual target machine and check `docker compose logs -f` on first boot.
 
 To update after pulling new code: `docker compose up -d --build` again — the data volume is untouched.
-
-## Credits
-
-Song BPM data powered by [GetSongBPM](https://getsongbpm.com).

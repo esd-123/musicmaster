@@ -1,6 +1,5 @@
 import type { Enricher, EnrichmentField, ReleaseForEnrichment } from "./types";
-
-const USER_AGENT = "MusicMaster/0.1 (personal vinyl collection app)";
+import { USER_AGENT } from "@/lib/userAgent";
 
 interface SearchResponse {
   query?: { search: { title: string }[] };
@@ -22,6 +21,17 @@ async function searchTitle(query: string): Promise<string | null> {
   return data.query?.search?.[0]?.title ?? null;
 }
 
+// Wikipedia's full-text search has no relevance-score threshold to check
+// (unlike MusicBrainz), so a weak/no-real-match query can still return some
+// unrelated top hit — e.g. "Brush" once matched the Wikipedia page for
+// Blink-182. Requiring the artist name to actually appear in the returned
+// summary is a cheap sanity check that catches this class of mismatch.
+function summaryMentionsArtist(summary: string, artist: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normalizedArtist = normalize(artist);
+  return normalizedArtist.length > 0 && normalize(summary).includes(normalizedArtist);
+}
+
 async function fetchSummary(title: string): Promise<SummaryResponse | null> {
   const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
@@ -38,6 +48,9 @@ export const wikipediaEnricher: Enricher = {
 
     const summary = await fetchSummary(title);
     if (!summary || !summary.extract || summary.type === "disambiguation") return [];
+    if (!summaryMentionsArtist(summary.extract, artist) && !summaryMentionsArtist(title, artist)) {
+      return [];
+    }
 
     const fields: EnrichmentField[] = [
       { fieldKey: "wikipedia_summary", fieldValue: summary.extract },

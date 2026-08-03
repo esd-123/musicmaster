@@ -6,10 +6,16 @@ import {
   real,
   primaryKey,
   uniqueIndex,
+  check,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
 // ---------------------------------------------------------------------------
-// Catalog (Discogs-sourced — "pull"). Freely overwritten on resync.
+// Catalog (Discogs-sourced — "pull"). Written once, at initial import, per
+// discogs_instance_id — src/lib/discogs/sync.ts deliberately leaves
+// already-known instances untouched on resync (no genre/artist/track
+// updates), specifically so genres_styles/release_genres_styles stay safe
+// for the UI to edit afterward without a resync overwriting those edits.
 // ---------------------------------------------------------------------------
 
 export const releases = sqliteTable("releases", {
@@ -19,6 +25,7 @@ export const releases = sqliteTable("releases", {
   title: text("title").notNull(),
   year: integer("year"),
   format: text("format"),
+  label: text("label"),
   coverImageUrl: text("cover_image_url"),
   discogsNotes: text("discogs_notes"),
   discogsCommunityRating: real("discogs_community_rating"),
@@ -69,8 +76,29 @@ export const genresStyles = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     name: text("name").notNull(),
     kind: text("kind", { enum: ["genre", "style"] }).notNull(),
+    // Brief, user-editable blurb (e.g. what distinguishes this genre/style) —
+    // surfaced in the genre editor and folded into NL-query prompts to help
+    // the model reason about genre closeness/meaning.
+    description: text("description"),
+    // The one genre a style belongs to — mandatory for every style (never
+    // null; enforced by the check constraint below), always null for genres
+    // themselves ("genres are major musical classes" — top-level, no
+    // parent). This is the authoritative classification, not a display hint:
+    // the genre editor's Kanban board groups purely by this column now, with
+    // no co-occurrence fallback. No `onDelete` (defaults to restrict) so
+    // deleting a genre that still has styles pointing at it fails loudly
+    // instead of silently orphaning them — callers must re-parent first.
+    parentGenreId: integer("parent_genre_id").references(
+      (): AnySQLiteColumn => genresStyles.id,
+    ),
   },
-  (table) => [uniqueIndex("genres_styles_name_kind_idx").on(table.name, table.kind)],
+  (table) => [
+    uniqueIndex("genres_styles_name_kind_idx").on(table.name, table.kind),
+    check(
+      "genres_styles_parent_kind_check",
+      sql`(${table.kind} = 'style' AND ${table.parentGenreId} IS NOT NULL) OR (${table.kind} = 'genre' AND ${table.parentGenreId} IS NULL)`,
+    ),
+  ],
 );
 
 export const releaseGenresStyles = sqliteTable(
@@ -140,6 +168,26 @@ export const playEvents = sqliteTable("play_events", {
 });
 
 // ---------------------------------------------------------------------------
+// Mood axes (synthesized, like about_summary, but numeric rather than prose).
+// Seeded from a genre/tag/mood -> axis prior mapping, then freely user-edited
+// via the mood editor — user edits are the source of truth going forward,
+// nothing else overwrites this table once a release has a row.
+// ---------------------------------------------------------------------------
+
+export const releaseMoodAxes = sqliteTable("release_mood_axes", {
+  releaseId: integer("release_id")
+    .primaryKey()
+    .references(() => releases.id, { onDelete: "cascade" }),
+  // All three axes are floats in [-1, 1].
+  approachability: real("approachability").notNull().default(0), // -1 challenging .. +1 approachable
+  valence: real("valence").notNull().default(0), // -1 dark .. +1 bright
+  density: real("density").notNull().default(0), // -1 sparse .. +1 propulsive
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
 // Enrichment cache (pulled, provenance-tracked).
 // ---------------------------------------------------------------------------
 
@@ -151,7 +199,9 @@ export const enrichmentCache = sqliteTable(
       .notNull()
       .references(() => releases.id, { onDelete: "cascade" }),
     source: text("source", {
-      enum: ["musicbrainz", "lastfm", "wikipedia"],
+      // "claude" is a synthesized summary derived from the other sources
+      // (plus Discogs notes) — not a pulled fact, but cached the same way.
+      enum: ["musicbrainz", "lastfm", "wikipedia", "claude", "apple_music"],
     }).notNull(),
     fieldKey: text("field_key").notNull(),
     fieldValue: text("field_value").notNull(),
@@ -168,21 +218,6 @@ export const enrichmentCache = sqliteTable(
     ),
   ],
 );
-
-// BPM is pull-only — the user will never hand-enter it. Kept as its own
-// typed/indexed column (not folded into enrichment_cache) since it's a
-// first-class sort/filter field in the UI.
-export const bpm = sqliteTable("bpm", {
-  releaseId: integer("release_id")
-    .primaryKey()
-    .references(() => releases.id, { onDelete: "cascade" }),
-  bpm: real("bpm").notNull(),
-  source: text("source", { enum: ["getsongbpm", "acousticbrainz"] }).notNull(),
-  confidence: text("confidence"),
-  fetchedAt: text("fetched_at")
-    .notNull()
-    .default(sql`(current_timestamp)`),
-});
 
 // ---------------------------------------------------------------------------
 // Operational / audit.

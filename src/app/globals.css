@@ -1,8 +1,28 @@
 @import "tailwindcss";
 
+/* `dark:` utilities apply when explicitly toggled to dark (`.dark` on
+   <html>), or when the OS prefers dark and the user hasn't explicitly
+   overridden to light (`.light` on <html>). This mirrors the CSS-variable
+   fallback block below, so both stay in sync — without this, `dark:`
+   utilities only ever responded to the `.dark` class, which nothing sets
+   until the toggle is clicked once, leaving every `dark:`-styled element
+   (everything but the plain CSS-variable colors below) stuck in light mode
+   on first load for anyone whose OS is set to dark. */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:not(.light, .light *)) {
+      @slot;
+    }
+  }
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f2f2f2;
+  --foreground: #141414;
+  --card-background: #ffffff;
 }
 
 @theme inline {
@@ -13,14 +33,21 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
+  :root:not(.light):not(.dark) {
+    --background: #111111;
     --foreground: #ededed;
+    --card-background: #1c1c1c;
   }
+}
+
+:root.dark {
+  --background: #111111;
+  --foreground: #ededed;
+  --card-background: #1c1c1c;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }

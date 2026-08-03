@@ -1,8 +1,3 @@
-"use client";
-
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
-
 interface PlayRow {
   id: number;
   playedAt: string;
@@ -14,37 +9,13 @@ function formatTimestamp(iso: string) {
   return new Date(normalized).toLocaleString();
 }
 
-export function PlayHistory({
-  releaseId,
-  plays,
-}: {
-  releaseId: number;
-  plays: PlayRow[];
-}) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-
-  async function logPlay() {
-    await fetch(`/api/releases/${releaseId}/plays`, { method: "POST" });
-    startTransition(() => router.refresh());
-  }
-
+export function PlayHistory({ plays }: { plays: PlayRow[] }) {
   return (
     <section className="mt-10">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          Play history
-          {plays.length > 0 ? ` · ${plays.length} play${plays.length === 1 ? "" : "s"}` : ""}
-        </h2>
-        <button
-          type="button"
-          onClick={logPlay}
-          disabled={isPending}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-black"
-        >
-          ▶ Play this record
-        </button>
-      </div>
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        Play history
+        {plays.length > 0 ? ` · ${plays.length} play${plays.length === 1 ? "" : "s"}` : ""}
+      </h2>
 
       {plays.length === 0 ? (
         <p className="text-sm text-zinc-500">Not logged as played yet.</p>

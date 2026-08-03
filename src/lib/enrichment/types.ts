@@ -9,7 +9,7 @@ export interface EnrichmentField {
   fieldValue: string;
 }
 
-export type EnrichmentSource = "wikipedia" | "musicbrainz" | "lastfm";
+export type EnrichmentSource = "wikipedia" | "musicbrainz" | "lastfm" | "apple_music";
 
 export interface Enricher {
   source: EnrichmentSource;

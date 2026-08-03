@@ -1,7 +1,7 @@
-// Discogs free-text fields (release notes, artist profiles) use a small
-// BBCode-like markup. Strip it down to plain text for display.
-export function stripDiscogsMarkup(text: string): string {
-  return text
-    .replace(/\[url=[^\]]*\]([^[]*)\[\/url\]/gi, "$1")
-    .replace(/\[\/?(b|i|u|url)\]/gi, "");
+// Discogs disambiguates same-named artists with a trailing " (N)" (e.g.
+// "Zar (16)") — meaningful in their own database, meaningless to everyone
+// else. Our artists table already dedupes on discogs_artist_id, not on
+// this display name, so stripping it is purely cosmetic and safe.
+export function stripDiscogsDisambiguator(name: string): string {
+  return name.replace(/\s*\(\d+\)\s*$/, "").trim();
 }

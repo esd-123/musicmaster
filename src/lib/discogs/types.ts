@@ -15,6 +15,7 @@ export interface DiscogsBasicInformation {
   artists: { id: number; name: string; join?: string; role?: string }[];
   genres?: string[];
   styles?: string[];
+  labels?: { name: string; catno?: string }[];
 }
 
 export interface DiscogsCollectionItem {

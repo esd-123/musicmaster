@@ -10,6 +10,7 @@ import {
   syncRuns,
 } from "@/db/schema";
 import { discogsFetch } from "./client";
+import { stripDiscogsDisambiguator } from "@/lib/discogsMarkup";
 import type {
   DiscogsCollectionResponse,
   DiscogsReleaseDetail,
@@ -25,7 +26,8 @@ function parseDurationSeconds(duration?: string): number | null {
   return null;
 }
 
-async function upsertArtist(discogsArtistId: number, name: string): Promise<number> {
+async function upsertArtist(discogsArtistId: number, rawName: string): Promise<number> {
+  const name = stripDiscogsDisambiguator(rawName);
   const existing = await db.query.artists.findFirst({
     where: eq(artists.discogsArtistId, discogsArtistId),
   });
@@ -107,6 +109,9 @@ function basicInfoFields(info: DiscogsBasicInformation, dateAdded: string) {
     title: info.title,
     year: info.year || null,
     format: info.formats?.map((f) => f.name).join(", ") || null,
+    label: info.labels
+      ? [...new Set(info.labels.map((l) => l.name))].join(", ") || null
+      : null,
     coverImageUrl: info.cover_image || info.thumb || null,
     dateAdded,
     lastSyncedAt: new Date().toISOString(),
@@ -183,18 +188,13 @@ export async function syncDiscogsCollection(): Promise<SyncResult> {
             await replaceReleaseGenresStyles(inserted.id, detail.genres, detail.styles);
             await replaceReleaseTracks(inserted.id, detail);
             newReleases++;
-          } else {
-            // Already known: cheap refresh from the collection listing only.
-            await db
-              .update(releases)
-              .set(basicInfoFields(item.basic_information, item.date_added))
-              .where(eq(releases.id, existing.id));
-            await replaceReleaseGenresStyles(
-              existing.id,
-              item.basic_information.genres,
-              item.basic_information.styles,
-            );
           }
+          // Already-known instances are intentionally left untouched: Discogs
+          // has no new information for a release already in the collection
+          // (its catalog data for that specific instance is static), and
+          // re-syncing would blow away genres/tags added afterward by other
+          // parts of the app. The sync's only job past initial import is to
+          // detect and add genuinely new instances.
           itemsProcessed++;
         } catch (err) {
           itemsFailed++;

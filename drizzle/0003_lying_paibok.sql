@@ -1,0 +1,1 @@
+ALTER TABLE `release_tags` DROP COLUMN `source`;

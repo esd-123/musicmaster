@@ -1,8 +1,8 @@
 import type { Enricher, EnrichmentField, ReleaseForEnrichment } from "./types";
 import { sleep } from "./types";
+import { USER_AGENT } from "@/lib/userAgent";
 
 // MusicBrainz requires a descriptive User-Agent and asks for ~1 req/sec.
-const USER_AGENT = "MusicMaster/0.1 (personal vinyl collection app)";
 const MIN_INTERVAL_MS = 1100;
 
 let lastRequestAt = 0;
