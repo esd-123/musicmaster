@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { anthropic, QUERY_MODEL, SHORTLIST_MODEL } from "./client";
+import { parseWithRetry } from "./parseWithRetry";
 import {
   buildCollectionCatalog,
   buildShortlistPromptText,
@@ -50,34 +51,6 @@ Pick 8 records from this shortlist that best fit the request (fewer only if the 
 
 Shortlist:
 `;
-
-/**
- * Calls Claude once; retries once on a malformed/empty parsed_output OR a
- * thrown error (e.g. schema validation failure, transient API error).
- */
-async function parseWithRetry<T>(
-  label: string,
-  call: () => Promise<T | null>,
-): Promise<T> {
-  const attempt = async () => {
-    try {
-      return await call();
-    } catch (err) {
-      console.warn(`[query] ${label}: attempt threw`, err);
-      return null;
-    }
-  };
-
-  let result = await attempt();
-  if (!result) {
-    console.warn(`[query] ${label}: first attempt failed, retrying once`);
-    result = await attempt();
-  }
-  if (!result) {
-    throw new Error(`Claude did not return a parseable response for ${label} after retrying`);
-  }
-  return result;
-}
 
 async function shortlistCandidates(
   catalog: CatalogEntry[],
