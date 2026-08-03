@@ -122,6 +122,7 @@ export interface SyncResult {
   itemsProcessed: number;
   itemsFailed: number;
   newReleases: number;
+  itemsRemoved: number;
 }
 
 export async function syncDiscogsCollection(): Promise<SyncResult> {
@@ -148,10 +149,12 @@ export async function syncDiscogsCollection(): Promise<SyncResult> {
   let itemsProcessed = 0;
   let itemsFailed = 0;
   let newReleases = 0;
+  let itemsRemoved = 0;
 
   try {
     let page = 1;
     let totalPages = 1;
+    const seenInstanceIds = new Set<number>();
 
     do {
       const data = await discogsFetch<DiscogsCollectionResponse>(
@@ -161,6 +164,7 @@ export async function syncDiscogsCollection(): Promise<SyncResult> {
       totalPages = data.pagination.pages;
 
       for (const item of data.releases) {
+        seenInstanceIds.add(item.instance_id);
         try {
           const existing = await db.query.releases.findFirst({
             where: eq(releases.discogsInstanceId, item.instance_id),
@@ -205,6 +209,29 @@ export async function syncDiscogsCollection(): Promise<SyncResult> {
       page++;
     } while (page <= totalPages);
 
+    // Anything in our DB whose discogs_instance_id wasn't in this run's
+    // collection has been removed from Discogs (sold, deleted, moved out of
+    // the synced folder) — mirror that removal here. Cascades via the
+    // existing onDelete: cascade FKs (artists/tags/genres/styles themselves
+    // are shared vocabulary and are left in place, even if now unused).
+    // Guarded on a non-empty result: an anomalous empty page response should
+    // never be interpreted as "the whole collection was removed."
+    if (seenInstanceIds.size > 0) {
+      const currentReleases = await db
+        .select({ id: releases.id, discogsInstanceId: releases.discogsInstanceId })
+        .from(releases);
+      for (const r of currentReleases) {
+        if (!seenInstanceIds.has(r.discogsInstanceId)) {
+          await db.delete(releases).where(eq(releases.id, r.id));
+          itemsRemoved++;
+        }
+      }
+    } else {
+      console.warn(
+        "[sync] Discogs collection response was empty; skipping stale-release cleanup as a safety guard",
+      );
+    }
+
     await db
       .update(syncRuns)
       .set({
@@ -228,5 +255,5 @@ export async function syncDiscogsCollection(): Promise<SyncResult> {
     throw err;
   }
 
-  return { itemsProcessed, itemsFailed, newReleases };
+  return { itemsProcessed, itemsFailed, newReleases, itemsRemoved };
 }
