@@ -65,13 +65,17 @@ export async function upsertField(
 // deliberately NOT refreshed on a schedule — it's generated once (when a
 // release is first added) and only ever regenerated when the user
 // explicitly asks for a redo via the manual endpoint, since "wrong until
-// I say otherwise" is a judgment call only the user can make.
+// I say otherwise" is a judgment call only the user can make. Also stops
+// once generation has permanently given up (see enrichAboutSummary) —
+// this is the most expensive call in the app (Sonnet, up to 2 web
+// searches), so an unresolved failure must not mean "retry every night
+// forever." The manual regenerate endpoint bypasses this check entirely.
 async function needsAboutSummary(releaseId: number): Promise<boolean> {
   const existing = await db.query.enrichmentCache.findFirst({
     where: and(
       eq(enrichmentCache.releaseId, releaseId),
       eq(enrichmentCache.source, "claude"),
-      eq(enrichmentCache.fieldKey, "about_summary"),
+      inArray(enrichmentCache.fieldKey, ["about_summary", "about_summary_gave_up"]),
     ),
   });
   return !existing;
@@ -110,7 +114,10 @@ export async function enrichAboutSummary(
     lastfmTags: byKey["lastfm_tags"] ?? null,
   });
 
-  if (!summary) return false;
+  if (!summary) {
+    await upsertField(releaseId, "claude", "about_summary_gave_up", "true");
+    return false;
+  }
   await upsertField(releaseId, "claude", "about_summary", summary.text);
   await upsertField(
     releaseId,

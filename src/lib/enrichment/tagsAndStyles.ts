@@ -94,15 +94,34 @@ export async function enrichTagsAndStyles(
 
   const prompt = buildPrompt(release, aboutSummary, existingVocab, existingGenresStyles);
 
-  const result = await parseWithRetry("tags-styles", async () => {
-    const message = await anthropic.messages.parse({
-      model: SHORTLIST_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-      output_config: { format: zodOutputFormat(AssignmentSchema) },
+  // parseWithRetry already retries once internally; if it still fails, give
+  // up permanently rather than re-paying for this call every night forever —
+  // unlike the free pull-enrichers above, this is a metered call, so "no
+  // cache row yet" can't be allowed to mean "retry indefinitely" here.
+  let result: z.infer<typeof AssignmentSchema>;
+  try {
+    result = await parseWithRetry("tags-styles", async () => {
+      const message = await anthropic.messages.parse({
+        model: SHORTLIST_MODEL,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+        output_config: { format: zodOutputFormat(AssignmentSchema) },
+      });
+      return message.parsed_output;
     });
-    return message.parsed_output;
-  });
+  } catch (err) {
+    console.error(
+      `[enrichment] tags/styles assignment gave up for release ${releaseId} after retrying:`,
+      err,
+    );
+    await db.insert(enrichmentCache).values({
+      releaseId,
+      source: "claude",
+      fieldKey: "tags_styles_assigned",
+      fieldValue: "gave_up",
+    });
+    return { tagsAssigned: 0, genresStylesAssigned: 0 };
+  }
 
   let tagsAssigned = 0;
   for (const t of result.tags) {

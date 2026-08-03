@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { releaseMoodAxes } from "@/db/schema";
+import { releaseMoodAxes, enrichmentCache } from "@/db/schema";
 import { anthropic, SHORTLIST_MODEL } from "@/lib/llm/client";
 import { parseWithRetry } from "@/lib/llm/parseWithRetry";
 
@@ -51,24 +51,48 @@ function buildFacts(input: MoodAxesInput): string {
 /** A release's mood axes are never re-backfilled once a row exists — same
  * source-of-truth-after-first-write posture as the original hand-authored
  * mapping backfill, just scored per-release via direct LLM judgment now
- * instead of averaging a static label->axis table. */
+ * instead of averaging a static label->axis table. Also stops once a scoring
+ * attempt has permanently given up (see scoreMoodAxes) — this is a metered
+ * call, so an unresolved failure must not mean "retry every night forever." */
 export async function needsMoodAxes(releaseId: number): Promise<boolean> {
-  const existing = await db.query.releaseMoodAxes.findFirst({
-    where: eq(releaseMoodAxes.releaseId, releaseId),
-  });
-  return !existing;
+  const [axesRow, gaveUp] = await Promise.all([
+    db.query.releaseMoodAxes.findFirst({ where: eq(releaseMoodAxes.releaseId, releaseId) }),
+    db.query.enrichmentCache.findFirst({
+      where: and(
+        eq(enrichmentCache.releaseId, releaseId),
+        eq(enrichmentCache.source, "claude"),
+        eq(enrichmentCache.fieldKey, "mood_axes_gave_up"),
+      ),
+    }),
+  ]);
+  return !axesRow && !gaveUp;
 }
 
 export async function scoreMoodAxes(releaseId: number, input: MoodAxesInput): Promise<boolean> {
-  const result = await parseWithRetry("mood-axes", async () => {
-    const message = await anthropic.messages.parse({
-      model: SHORTLIST_MODEL,
-      max_tokens: 512,
-      messages: [{ role: "user", content: PROMPT_PREFIX + buildFacts(input) }],
-      output_config: { format: zodOutputFormat(AxesSchema) },
+  // parseWithRetry already retries once internally; if it still fails, give
+  // up permanently (see needsMoodAxes) rather than re-paying for this call
+  // every night forever.
+  let result: z.infer<typeof AxesSchema>;
+  try {
+    result = await parseWithRetry("mood-axes", async () => {
+      const message = await anthropic.messages.parse({
+        model: SHORTLIST_MODEL,
+        max_tokens: 512,
+        messages: [{ role: "user", content: PROMPT_PREFIX + buildFacts(input) }],
+        output_config: { format: zodOutputFormat(AxesSchema) },
+      });
+      return message.parsed_output;
     });
-    return message.parsed_output;
-  });
+  } catch (err) {
+    console.error(`[enrichment] mood-axis scoring gave up for release ${releaseId} after retrying:`, err);
+    await db.insert(enrichmentCache).values({
+      releaseId,
+      source: "claude",
+      fieldKey: "mood_axes_gave_up",
+      fieldValue: "true",
+    });
+    return false;
+  }
 
   await db.insert(releaseMoodAxes).values({
     releaseId,
