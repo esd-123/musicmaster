@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getReleaseDetail } from "@/lib/releases";
-import { stripDiscogsMarkup } from "@/lib/discogsMarkup";
 import { ReleaseUserPanel } from "@/components/ReleaseUserPanel";
+import { ReleaseTagChips } from "@/components/ReleaseTagChips";
+import { ReleaseNotes } from "@/components/ReleaseNotes";
+import { PlayButton } from "@/components/PlayButton";
 import { PlayHistory } from "@/components/PlayHistory";
-import { EnrichmentPanel } from "@/components/EnrichmentPanel";
+import { AboutRecord } from "@/components/AboutRecord";
 import { ReleaseCard } from "@/components/ReleaseCard";
 import { getRecommendations } from "@/lib/recommendations/similarity";
 import { getReleasesByIds } from "@/lib/releases";
@@ -28,6 +30,19 @@ export default async function ReleasePage({
   const recs = await getRecommendations(release.id);
   const recommendations = await getReleasesByIds(recs.map((r) => r.id));
 
+  const appleMusicUrl =
+    release.enrichment.find(
+      (r) => r.source === "apple_music" && r.fieldKey === "apple_music_url",
+    )?.fieldValue ?? null;
+
+  // No free/unauthenticated YouTube search API exists, so — unlike the
+  // Apple Music link — this is a search-results URL, not a resolved video.
+  const youtubeSearchUrl = appleMusicUrl
+    ? null
+    : `https://www.youtube.com/results?search_query=${encodeURIComponent(
+        `${release.artistNames.join(" ")} ${release.title} full album`,
+      )}`;
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <Link href="/" className="text-sm text-zinc-500 hover:underline">
@@ -46,44 +61,45 @@ export default async function ReleasePage({
           ) : null}
         </div>
 
-        <div className="flex-1">
-          <h1 className="text-2xl font-semibold">{release.title}</h1>
-          <p className="text-zinc-500">
-            {release.artistNames.join(", ")}
-            {release.year ? ` · ${release.year}` : ""}
-          </p>
-          {release.format ? (
-            <p className="mt-1 text-sm text-zinc-500">{release.format}</p>
-          ) : null}
-
-          {(release.genres.length > 0 || release.styles.length > 0) && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {[...release.genres, ...release.styles].map((g) => (
-                <span
-                  key={g}
-                  className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs dark:bg-zinc-900"
-                >
-                  {g}
-                </span>
-              ))}
+        <div className="flex flex-1 flex-col">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold">{release.title}</h1>
+              <p className="text-zinc-500">
+                {release.artistNames.join(", ")}
+                {release.year ? ` · ${release.year}` : ""}
+              </p>
+              {release.format || release.label ? (
+                <p className="mt-1 text-sm text-zinc-500">
+                  {[release.format, release.label].filter(Boolean).join(" · ")}
+                </p>
+              ) : null}
             </div>
-          )}
+            <PlayButton releaseId={release.id} />
+          </div>
 
-          {release.bpm ? (
-            <p className="mt-3 text-sm text-zinc-500">
-              {Math.round(release.bpm.bpm)} BPM
-              <span className="text-zinc-400"> · {release.bpm.source}</span>
-            </p>
-          ) : null}
+          <hr className="mt-4 border-black/10 dark:border-white/10" />
 
-          <ReleaseUserPanel
-            releaseId={release.id}
-            initialRating={release.userData?.rating ?? null}
-            initialNotes={release.userData?.notes ?? null}
-            initialTags={release.tags}
-          />
+          <div className="flex flex-1 flex-col justify-center">
+            <ReleaseTagChips
+              releaseId={release.id}
+              genreStyles={release.genreStyleTags}
+              tags={release.tags}
+            />
+
+            <ReleaseUserPanel
+              releaseId={release.id}
+              initialRating={release.userData?.rating ?? null}
+              appleMusicUrl={appleMusicUrl}
+              youtubeSearchUrl={youtubeSearchUrl}
+            />
+          </div>
         </div>
       </div>
+
+      <AboutRecord releaseId={release.id} rows={release.enrichment} />
+
+      <ReleaseNotes releaseId={release.id} initialNotes={release.userData?.notes ?? null} />
 
       {release.tracks.length > 0 && (
         <section className="mt-10">
@@ -104,9 +120,7 @@ export default async function ReleasePage({
         </section>
       )}
 
-      <PlayHistory releaseId={release.id} plays={release.plays} />
-
-      <EnrichmentPanel rows={release.enrichment} />
+      <PlayHistory plays={release.plays} />
 
       {recommendations.length > 0 && (
         <section className="mt-10">
@@ -120,17 +134,6 @@ export default async function ReleasePage({
           </div>
         </section>
       )}
-
-      {release.discogsNotes ? (
-        <section className="mt-10">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Notes
-          </h2>
-          <p className="whitespace-pre-line text-sm text-zinc-600 dark:text-zinc-400">
-            {stripDiscogsMarkup(release.discogsNotes)}
-          </p>
-        </section>
-      ) : null}
     </main>
   );
 }

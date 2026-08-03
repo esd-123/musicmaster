@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { queryCollection } from "@/lib/llm/query";
-import { getReleasesByIds } from "@/lib/releases";
+import { getReleasesByIds, getTagsByReleaseIds } from "@/lib/releases";
 
 export async function POST(request: Request) {
   const body = await request.json();
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const excludeIds = Array.isArray(body.excludeIds)
+    ? body.excludeIds.filter((n: unknown): n is number => typeof n === "number")
+    : [];
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   }
@@ -16,11 +19,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await queryCollection(prompt);
+    const result = await queryCollection(prompt, excludeIds);
     const reasoningById = new Map(result.picks.map((p) => [p.release_id, p.reasoning]));
 
     const releases = await getReleasesByIds(result.picks.map((p) => p.release_id));
-    const picks = releases.map((r) => ({ ...r, reasoning: reasoningById.get(r.id) ?? "" }));
+    const tagsByRelease = await getTagsByReleaseIds(releases.map((r) => r.id));
+    const picks = releases.map((r) => ({
+      ...r,
+      reasoning: reasoningById.get(r.id) ?? "",
+      tags: tagsByRelease.get(r.id)?.tags ?? [],
+      moods: tagsByRelease.get(r.id)?.moods ?? [],
+    }));
 
     return NextResponse.json({ picks, overallReasoning: result.overall_reasoning });
   } catch (err) {

@@ -1,15 +1,25 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { enrichmentCache, bpm as bpmTable, syncRuns } from "@/db/schema";
+import { enrichmentCache, syncRuns } from "@/db/schema";
 import { getReleaseForEnrichment, listAllReleaseIds } from "@/lib/releases";
 import { wikipediaEnricher } from "./wikipedia";
 import { musicbrainzEnricher } from "./musicbrainz";
 import { lastfmEnricher } from "./lastfm";
-import { lookupBpm } from "./getsongbpm";
+import { appleMusicEnricher } from "./appleMusic";
+import { generateAboutSummary } from "./aboutSummary";
 import type { Enricher, EnrichmentSource } from "./types";
 
 const STALE_AFTER_MS = 180 * 24 * 60 * 60 * 1000; // 180 days
-const enrichers: Enricher[] = [wikipediaEnricher, musicbrainzEnricher, lastfmEnricher];
+const enrichers: Enricher[] = [
+  wikipediaEnricher,
+  musicbrainzEnricher,
+  lastfmEnricher,
+  appleMusicEnricher,
+];
+
+// The full set of valid enrichment_cache.source values — wider than
+// EnrichmentSource, which only covers the pluggable pull-enrichers above.
+type CacheSource = typeof enrichmentCache.$inferInsert.source;
 
 function isStale(fetchedAt: string): boolean {
   return Date.now() - new Date(fetchedAt.replace(" ", "T") + "Z").getTime() > STALE_AFTER_MS;
@@ -25,7 +35,7 @@ async function needsEnrichment(releaseId: number, source: EnrichmentSource): Pro
 
 async function upsertField(
   releaseId: number,
-  source: EnrichmentSource,
+  source: CacheSource,
   fieldKey: string,
   fieldValue: string,
 ) {
@@ -51,57 +61,87 @@ async function upsertField(
   }
 }
 
-async function enrichBpm(
+// Unlike the raw pull-sources above, the AI-synthesized summary is
+// deliberately NOT refreshed on a schedule — it's generated once (when a
+// release is first added) and only ever regenerated when the user
+// explicitly asks for a redo via the manual endpoint, since "wrong until
+// I say otherwise" is a judgment call only the user can make.
+async function needsAboutSummary(releaseId: number): Promise<boolean> {
+  const existing = await db.query.enrichmentCache.findFirst({
+    where: and(
+      eq(enrichmentCache.releaseId, releaseId),
+      eq(enrichmentCache.source, "claude"),
+      eq(enrichmentCache.fieldKey, "about_summary"),
+    ),
+  });
+  return !existing;
+}
+
+export async function enrichAboutSummary(
   releaseId: number,
-  releaseTitle: string,
-  artist: string,
-  tracks: { title: string }[],
-) {
-  const existing = await db.query.bpm.findFirst({ where: eq(bpmTable.releaseId, releaseId) });
-  if (existing && !isStale(existing.fetchedAt)) return false;
-  if (tracks.length === 0) return false;
+  release: Awaited<ReturnType<typeof getReleaseForEnrichment>>,
+): Promise<boolean> {
+  if (!release) return false;
 
-  // Representative track for a release-level BPM: the title track if one
-  // exists, else just the first track.
-  const titleTrack = tracks.find(
-    (t) => t.title.trim().toLowerCase() === releaseTitle.trim().toLowerCase(),
+  // The synthesized summary itself (source="claude") is deliberately excluded
+  // from its own inputs.
+  const rawSourceRows = await db
+    .select({ fieldKey: enrichmentCache.fieldKey, fieldValue: enrichmentCache.fieldValue })
+    .from(enrichmentCache)
+    .where(
+      and(
+        eq(enrichmentCache.releaseId, releaseId),
+        inArray(enrichmentCache.source, ["wikipedia", "musicbrainz", "lastfm"]),
+      ),
+    );
+  const byKey = Object.fromEntries(rawSourceRows.map((r) => [r.fieldKey, r.fieldValue]));
+
+  const summary = await generateAboutSummary({
+    title: release.title,
+    artist: release.artistNames.join(", "),
+    year: release.year,
+    genres: release.genres,
+    styles: release.styles,
+    discogsCommunityRating: release.discogsCommunityRating,
+    discogsCommunityRatingCount: release.discogsCommunityRatingCount,
+    wikipediaSummary: byKey["wikipedia_summary"] ?? null,
+    musicbrainzTags: byKey["musicbrainz_tags"] ?? null,
+    lastfmSummary: byKey["lastfm_summary"] ?? null,
+    lastfmTags: byKey["lastfm_tags"] ?? null,
+  });
+
+  if (!summary) return false;
+  await upsertField(releaseId, "claude", "about_summary", summary.text);
+  await upsertField(
+    releaseId,
+    "claude",
+    "about_summary_used_web_search",
+    summary.usedWebSearch ? "true" : "false",
   );
-  const track = titleTrack ?? tracks[0];
-
-  const result = await lookupBpm(artist, track.title);
-  if (!result) return false;
-
-  if (existing) {
-    await db
-      .update(bpmTable)
-      .set({
-        bpm: result.bpm,
-        source: "getsongbpm",
-        confidence: result.confidence,
-        fetchedAt: new Date().toISOString(),
-      })
-      .where(eq(bpmTable.releaseId, releaseId));
-  } else {
-    await db.insert(bpmTable).values({
-      releaseId,
-      bpm: result.bpm,
-      source: "getsongbpm",
-      confidence: result.confidence,
-    });
-  }
   return true;
+}
+
+/**
+ * Force-regenerates the About This Record summary for one release,
+ * overwriting whatever's there — the manual "redo this" path for when the
+ * user judges the existing write-up wrong or incomplete. Unlike the
+ * automatic pipeline, this always runs regardless of whether a summary
+ * already exists.
+ */
+export async function regenerateAboutSummary(releaseId: number): Promise<boolean> {
+  const release = await getReleaseForEnrichment(releaseId);
+  return enrichAboutSummary(releaseId, release);
 }
 
 export interface EnrichmentRunResult {
   releasesConsidered: number;
   fieldsWritten: number;
-  bpmFound: number;
+  summariesWritten: number;
 }
 
 /**
  * Runs enrichment for up to `limit` releases that are missing (or have
- * stale) data. Never touches user_release_data, release_tags, or
- * bpm-as-user-entry — BPM here is always machine-sourced.
+ * stale) data. Never touches user_release_data or release_tags.
  */
 export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
   const [run] = await db
@@ -111,7 +151,7 @@ export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
 
   let releasesConsidered = 0;
   let fieldsWritten = 0;
-  let bpmFound = 0;
+  let summariesWritten = 0;
 
   try {
     const allIds = await listAllReleaseIds();
@@ -122,7 +162,7 @@ export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
       const needsAny =
         (await Promise.all(enrichers.map((e) => needsEnrichment(releaseId, e.source)))).some(
           Boolean,
-        ) || (await db.query.bpm.findFirst({ where: eq(bpmTable.releaseId, releaseId) })) === undefined;
+        ) || (await needsAboutSummary(releaseId));
 
       if (!needsAny) continue;
 
@@ -144,16 +184,15 @@ export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
         }
       }
 
-      try {
-        const found = await enrichBpm(
-          releaseId,
-          release.title,
-          release.artistNames[0] ?? "",
-          release.tracks,
-        );
-        if (found) bpmFound++;
-      } catch (err) {
-        console.error(`[enrichment] bpm lookup failed for release ${releaseId}:`, err);
+      // Runs after the raw sources above so it can synthesize from whatever
+      // was just fetched (plus anything already cached from prior runs).
+      if (await needsAboutSummary(releaseId)) {
+        try {
+          const wrote = await enrichAboutSummary(releaseId, release);
+          if (wrote) summariesWritten++;
+        } catch (err) {
+          console.error(`[enrichment] about-summary generation failed for release ${releaseId}:`, err);
+        }
       }
     }
 
@@ -178,5 +217,5 @@ export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
     throw err;
   }
 
-  return { releasesConsidered, fieldsWritten, bpmFound };
+  return { releasesConsidered, fieldsWritten, summariesWritten };
 }

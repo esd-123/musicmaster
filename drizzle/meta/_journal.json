@@ -8,6 +8,62 @@
       "when": 1785379400016,
       "tag": "0000_clever_fallen_one",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785424208304,
+      "tag": "0001_keen_korvac",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785526987507,
+      "tag": "0002_lethal_veda",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785527467893,
+      "tag": "0003_lying_paibok",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785531241567,
+      "tag": "0004_drop_bpm",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1785698944294,
+      "tag": "0005_first_speedball",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785722927803,
+      "tag": "0006_stiff_black_crow",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1785772318639,
+      "tag": "0007_peaceful_triathlon",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1785855446000,
+      "tag": "0008_rename_challenge_to_approachability",
+      "breakpoints": true
     }
   ]
 }

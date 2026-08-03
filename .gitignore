@@ -45,6 +45,9 @@ next-env.d.ts
 /data/*.db
 /data/*.db-shm
 /data/*.db-wal
+# guard against a stray DB file created at the repo root by a scratch script
+# with no DATABASE_PATH / wrong cwd
+/sqlite.db
 
 # locally downloaded Node.js runtime (no system-wide install on this machine)
 /.tools/

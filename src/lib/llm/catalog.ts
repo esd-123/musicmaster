@@ -8,10 +8,16 @@ import {
   genresStyles,
   releaseTags,
   tags,
-  bpm as bpmTable,
   userReleaseData,
   enrichmentCache,
+  releaseMoodAxes,
 } from "@/db/schema";
+
+export interface MoodAxes {
+  approachability: number;
+  valence: number;
+  density: number;
+}
 
 export interface CatalogEntry {
   id: number;
@@ -21,12 +27,14 @@ export interface CatalogEntry {
   genres: string[];
   tags: string[];
   moods: string[];
-  bpm: number | null;
   rating: number | null;
   summary: string | null;
+  moodAxes: MoodAxes;
 }
 
-const SUMMARY_MAX_LENGTH = 220;
+/** Full about_summary text can run past 3000 chars; this caps it for the
+ * detail-pass prompt (only ~20-30 records at a time), not the shortlist pass. */
+const SUMMARY_MAX_LENGTH = 800;
 
 /**
  * Builds a compact representation of the whole collection for the LLM to
@@ -67,11 +75,18 @@ export async function buildCollectionCatalog(): Promise<CatalogEntry[]> {
     .innerJoin(tags, eq(releaseTags.tagId, tags.id))
     .groupBy(releaseTags.releaseId, tags.kind);
 
-  const bpmRows = await db.select({ releaseId: bpmTable.releaseId, bpm: bpmTable.bpm }).from(bpmTable);
-
   const ratingRows = await db
     .select({ releaseId: userReleaseData.releaseId, rating: userReleaseData.rating })
     .from(userReleaseData);
+
+  const moodAxesRows = await db
+    .select({
+      releaseId: releaseMoodAxes.releaseId,
+      approachability: releaseMoodAxes.approachability,
+      valence: releaseMoodAxes.valence,
+      density: releaseMoodAxes.density,
+    })
+    .from(releaseMoodAxes);
 
   const summaryRows = await db
     .select({
@@ -80,12 +95,19 @@ export async function buildCollectionCatalog(): Promise<CatalogEntry[]> {
       fieldValue: enrichmentCache.fieldValue,
     })
     .from(enrichmentCache)
-    .where(inArray(enrichmentCache.fieldKey, ["wikipedia_summary", "lastfm_summary"]));
+    .where(
+      inArray(enrichmentCache.fieldKey, ["about_summary", "wikipedia_summary", "lastfm_summary"]),
+    );
 
   const artistsByRelease = new Map(artistRows.map((r) => [r.releaseId, r.names]));
   const genresByRelease = new Map(genreRows.map((r) => [r.releaseId, r.names]));
-  const bpmByRelease = new Map(bpmRows.map((r) => [r.releaseId, r.bpm]));
   const ratingByRelease = new Map(ratingRows.map((r) => [r.releaseId, r.rating]));
+  const moodAxesByRelease = new Map(
+    moodAxesRows.map((r) => [
+      r.releaseId,
+      { approachability: r.approachability, valence: r.valence, density: r.density },
+    ]),
+  );
 
   const tagsByRelease = new Map<number, string[]>();
   const moodsByRelease = new Map<number, string[]>();
@@ -94,11 +116,18 @@ export async function buildCollectionCatalog(): Promise<CatalogEntry[]> {
     target.set(row.releaseId, row.names.split(", "));
   }
 
+  // Prefer the AI-generated "About This Record" summary (source of truth for
+  // tone/content); fall back to raw Wikipedia/Last.fm text only if a release
+  // has no about_summary yet.
+  const SUMMARY_SOURCE_PRIORITY = ["about_summary", "wikipedia_summary", "lastfm_summary"];
   const summaryByRelease = new Map<number, string>();
+  const summarySourceRank = new Map<number, number>();
   for (const row of summaryRows) {
-    // Prefer Wikipedia; only fall back to Last.fm if no Wikipedia summary exists.
-    if (row.fieldKey === "wikipedia_summary" || !summaryByRelease.has(row.releaseId)) {
+    const rank = SUMMARY_SOURCE_PRIORITY.indexOf(row.fieldKey);
+    const currentRank = summarySourceRank.get(row.releaseId);
+    if (currentRank === undefined || rank < currentRank) {
       summaryByRelease.set(row.releaseId, row.fieldValue);
+      summarySourceRank.set(row.releaseId, rank);
     }
   }
 
@@ -113,8 +142,8 @@ export async function buildCollectionCatalog(): Promise<CatalogEntry[]> {
       genres: genreNames ? genreNames.split(", ") : [],
       tags: tagsByRelease.get(r.id) ?? [],
       moods: moodsByRelease.get(r.id) ?? [],
-      bpm: bpmByRelease.get(r.id) ?? null,
       rating: ratingByRelease.get(r.id) ?? null,
+      moodAxes: moodAxesByRelease.get(r.id) ?? { approachability: 0, valence: 0, density: 0 },
       summary: summary
         ? summary.length > SUMMARY_MAX_LENGTH
           ? summary.slice(0, SUMMARY_MAX_LENGTH) + "…"
@@ -128,4 +157,53 @@ export async function buildCollectionCatalog(): Promise<CatalogEntry[]> {
 export async function buildCatalogPromptText(): Promise<string> {
   const catalog = await buildCollectionCatalog();
   return JSON.stringify(catalog);
+}
+
+export type ShortlistEntry = Omit<CatalogEntry, "summary">;
+
+/**
+ * Stripped-down catalog (no prose) covering the whole collection, for the
+ * cheap first-pass shortlist query. Structured data (genres/tags/moods/
+ * rating) is kept in full — only the summary text, the expensive part, is
+ * dropped.
+ *
+ * `excludeIds` are dropped from the catalog entirely (not just filtered from
+ * the result) so the shortlist model structurally can't re-suggest them —
+ * used for "retry" / "more like this" so a fresh set of records comes back.
+ *
+ * Takes an already-fetched `catalog` rather than calling
+ * `buildCollectionCatalog()` itself, so a caller doing both a shortlist and
+ * a detail pass in the same request (see `queryCollection`) can fetch the
+ * whole collection from the DB once and reuse it for both.
+ */
+export function buildShortlistPromptText(
+  catalog: CatalogEntry[],
+  excludeIds: number[] = [],
+): string {
+  const excludeSet = new Set(excludeIds);
+  const shortlist: ShortlistEntry[] = catalog
+    .filter((entry) => !excludeSet.has(entry.id))
+    .map(({ id, artist, title, year, genres, tags, moods, rating, moodAxes }) => ({
+      id,
+      artist,
+      title,
+      year,
+      genres,
+      tags,
+      moods,
+      rating,
+      moodAxes,
+    }));
+  return JSON.stringify(shortlist);
+}
+
+/**
+ * Full catalog entries (including summary text) restricted to a specific
+ * set of release ids, for the second-pass detailed query over a shortlist.
+ * Takes an already-fetched `catalog` — see `buildShortlistPromptText`.
+ */
+export function buildDetailCatalogPromptText(catalog: CatalogEntry[], ids: number[]): string {
+  const idSet = new Set(ids);
+  const detail = catalog.filter((entry) => idSet.has(entry.id));
+  return JSON.stringify(detail);
 }
