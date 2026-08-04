@@ -164,8 +164,18 @@ export interface EnrichmentRunResult {
  * Runs enrichment for up to `limit` releases that are missing data. Every
  * step here is one-shot per release (no staleness re-checks) — never
  * touches user_release_data.
+ *
+ * `releaseIds`, when given, restricts the run to exactly those ids instead
+ * of sweeping the full collection in ascending-id order — e.g. to enrich a
+ * just-synced batch immediately without waiting for the normal sweep to
+ * reach it (that sweep processes oldest-pending-first, so newly added
+ * releases, having the highest ids, are always last in line). `limit` is
+ * ignored in that mode.
  */
-export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
+export async function runEnrichment(
+  limit = 15,
+  releaseIds?: number[],
+): Promise<EnrichmentRunResult> {
   const [run] = await db
     .insert(syncRuns)
     .values({ jobType: "enrichment", status: "running" })
@@ -179,10 +189,11 @@ export async function runEnrichment(limit = 15): Promise<EnrichmentRunResult> {
   let moodAxesScored = 0;
 
   try {
-    const allIds = await listAllReleaseIds();
+    const allIds = releaseIds ?? (await listAllReleaseIds());
+    const targeted = releaseIds !== undefined;
 
     for (const releaseId of allIds) {
-      if (releasesConsidered >= limit) break;
+      if (!targeted && releasesConsidered >= limit) break;
 
       const needsAny =
         (await Promise.all(enrichers.map((e) => needsEnrichment(releaseId, e.source)))).some(
