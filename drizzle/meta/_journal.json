@@ -64,6 +64,20 @@
       "when": 1785855446000,
       "tag": "0008_rename_challenge_to_approachability",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1785855447000,
+      "tag": "0009_nosy_moon_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1785855448000,
+      "tag": "0010_nosy_black_bolt",
+      "breakpoints": true
     }
   ]
 }
