@@ -11,6 +11,8 @@ export interface MoodEditorEntry {
   genres: string[];
   styles: string[];
   moodAxes: { approachability: number; valence: number; density: number };
+  moodAxesSource: "seeded" | "manual";
+  moodAxesAuto: { approachability: number; valence: number; density: number } | null;
 }
 
 interface GenreGroup {
@@ -28,7 +30,7 @@ const MAX_UNDO = 50;
 const SELECT_CLASS =
   "rounded-full bg-white px-4 py-2 text-sm text-zinc-700 shadow-[0_0_0_1px_rgba(0,0,0,0.08)] outline-none dark:bg-zinc-900 dark:text-zinc-200 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12)]";
 // Non-breaking space so indentation survives whitespace collapsing in <option> rendering.
-const INDENT = "    ";
+const INDENT = "    ";
 
 function axesEqual(a: Axes, b: Axes): boolean {
   return (
@@ -117,10 +119,14 @@ export function MoodEditor({
   const [axesById, setAxesById] = useState<Map<number, Axes>>(
     () => new Map(entries.map((e) => [e.id, { ...e.moodAxes }])),
   );
+  const [sourceById, setSourceById] = useState<Map<number, "seeded" | "manual">>(
+    () => new Map(entries.map((e) => [e.id, e.moodAxesSource])),
+  );
   const [artistQuery, setArtistQuery] = useState("");
   const [genreFilter, setGenreFilter] = useState("");
   const [decadeFilter, setDecadeFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [saving, setSaving] = useState<Set<number>>(new Set());
   const [hover, setHover] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -148,9 +154,10 @@ export function MoodEditor({
         if (decade !== Number(decadeFilter)) return false;
       }
       if (yearFilter && e.year !== Number(yearFilter)) return false;
+      if (needsReviewOnly && sourceById.get(e.id) !== "seeded") return false;
       return true;
     });
-  }, [entries, artistQuery, genreFilter, decadeFilter, yearFilter]);
+  }, [entries, artistQuery, genreFilter, decadeFilter, yearFilter, needsReviewOnly, sourceById]);
 
   const filtered = useMemo(() => matchedEntries.slice(0, MAX_VISIBLE), [matchedEntries]);
   const totalMatches = matchedEntries.length;
@@ -163,6 +170,9 @@ export function MoodEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(axes),
       });
+      // The route always marks a PATCH'd row "manual" — mirror that
+      // optimistically rather than waiting on the response body.
+      setSourceById((prev) => new Map(prev).set(id, "manual"));
     } finally {
       setSaving((prev) => {
         const next = new Set(prev);
@@ -325,16 +335,38 @@ export function MoodEditor({
             </option>
           ))}
         </select>
+
+        <label className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm text-zinc-700 shadow-[0_0_0_1px_rgba(0,0,0,0.08)] dark:bg-zinc-900 dark:text-zinc-200 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.12)]">
+          <input
+            type="checkbox"
+            checked={needsReviewOnly}
+            onChange={(e) => setNeedsReviewOnly(e.target.checked)}
+            className="accent-emerald-600"
+          />
+          Needs review only
+        </label>
       </div>
 
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <p className="text-xs text-zinc-500">
-          {totalMatches === 0
-            ? "No matches."
-            : totalMatches > MAX_VISIBLE
-              ? `Showing ${MAX_VISIBLE} of ${totalMatches} matches — narrow your filters to see the rest.`
-              : `${totalMatches} record${totalMatches === 1 ? "" : "s"}`}
-        </p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-4">
+          <p className="text-xs text-zinc-500">
+            {totalMatches === 0
+              ? "No matches."
+              : totalMatches > MAX_VISIBLE
+                ? `Showing ${MAX_VISIBLE} of ${totalMatches} matches — narrow your filters to see the rest.`
+                : `${totalMatches} record${totalMatches === 1 ? "" : "s"}`}
+          </p>
+          <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-600" />
+              Auto-generated
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-500" />
+              Manually set
+            </span>
+          </div>
+        </div>
         <button
           type="button"
           onClick={handleUndo}
@@ -393,17 +425,19 @@ export function MoodEditor({
                 const cx = valToPx(axes[panel.xKey]);
                 const cy = SIZE - valToPx(axes[panel.yKey]);
                 const isSelected = entry.id === selectedId;
+                const isManual = sourceById.get(entry.id) === "manual";
+                const fillClass = isSelected
+                  ? "fill-orange-500"
+                  : isManual
+                    ? "fill-sky-500"
+                    : "fill-emerald-600";
                 return (
                   <circle
                     key={entry.id}
                     cx={cx}
                     cy={cy}
                     r={isSelected ? 7 : 5}
-                    className={
-                      isSelected
-                        ? "cursor-grab fill-orange-500 stroke-white dark:stroke-zinc-900"
-                        : "cursor-grab fill-emerald-600 stroke-white dark:stroke-zinc-900"
-                    }
+                    className={`cursor-grab stroke-white dark:stroke-zinc-900 ${fillClass}`}
                     strokeWidth={1.5}
                     onPointerDown={(e) => {
                       e.currentTarget.setPointerCapture(e.pointerId);
@@ -459,6 +493,11 @@ export function MoodEditor({
                 <label key={key} className="flex flex-col gap-1 text-xs text-zinc-500">
                   <span className="capitalize">
                     {key}: {fmt(selectedAxes[key])}
+                    {selected.moodAxesAuto && (
+                      <span className="ml-1 font-normal text-emerald-600 dark:text-emerald-500">
+                        (auto: {fmt(selected.moodAxesAuto[key])})
+                      </span>
+                    )}
                   </span>
                   <input
                     type="range"

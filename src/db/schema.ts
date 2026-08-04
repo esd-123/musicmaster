@@ -182,6 +182,23 @@ export const releaseMoodAxes = sqliteTable("release_mood_axes", {
   approachability: real("approachability").notNull().default(0), // -1 challenging .. +1 approachable
   valence: real("valence").notNull().default(0), // -1 dark .. +1 bright
   density: real("density").notNull().default(0), // -1 sparse .. +1 propulsive
+  // "seeded" = written by the enrichment pipeline or the original prior-mapping
+  // backfill; "manual" = a human edited it via the mood editor. Lets the mood
+  // editor UI distinguish "already reviewed" points from ones still worth a look.
+  source: text("source", { enum: ["seeded", "manual"] })
+    .notNull()
+    .default("seeded"),
+  // Frozen copy of whatever the pipeline first produced for this release,
+  // written once alongside the row above and never touched again — not even
+  // by a manual edit that overwrites approachability/valence/density above.
+  // Exists purely so a later hand-authored pass (see the mood editor's manual
+  // source) can be diffed against what the automated scoring originally said,
+  // for gauging how far off — and in what direction — the automated judgment
+  // runs. Null only for rows that were already "manual" before this column
+  // existed, whose original auto value is unrecoverable.
+  autoApproachability: real("auto_approachability"),
+  autoValence: real("auto_valence"),
+  autoDensity: real("auto_density"),
   updatedAt: text("updated_at")
     .notNull()
     .default(sql`(current_timestamp)`),

@@ -211,6 +211,12 @@ export interface MoodCubeEntryData {
   genres: string[];
   styles: string[];
   moodAxes: { approachability: number; valence: number; density: number };
+  moodAxesSource: "seeded" | "manual";
+  // The pipeline's original values, frozen at first-scoring time — null if
+  // never scored, or if manually edited before this snapshot existed (see
+  // schema.ts). Present even after `moodAxes` above has been hand-edited, so
+  // the two can be diffed against each other.
+  moodAxesAuto: { approachability: number; valence: number; density: number } | null;
 }
 
 /** Full-collection feed shared by the mood cube and mood editor — genres and
@@ -227,24 +233,43 @@ export async function listMoodCubeEntries(): Promise<MoodCubeEntryData[]> {
       approachability: releaseMoodAxes.approachability,
       valence: releaseMoodAxes.valence,
       density: releaseMoodAxes.density,
+      source: releaseMoodAxes.source,
+      autoApproachability: releaseMoodAxes.autoApproachability,
+      autoValence: releaseMoodAxes.autoValence,
+      autoDensity: releaseMoodAxes.autoDensity,
     })
     .from(releaseMoodAxes);
-  const moodAxesByRelease = new Map(
-    moodAxesRows.map((r) => [
-      r.releaseId,
-      { approachability: r.approachability, valence: r.valence, density: r.density },
-    ]),
-  );
+  const moodAxesByRelease = new Map(moodAxesRows.map((r) => [r.releaseId, r]));
 
-  return summaries.map((s) => ({
-    id: s.id,
-    artist: s.artistNames.join(", "),
-    title: s.title,
-    year: s.year,
-    genres: s.genres,
-    styles: s.styles,
-    moodAxes: moodAxesByRelease.get(s.id) ?? { approachability: 0, valence: 0, density: 0 },
-  }));
+  return summaries.map((s) => {
+    const axes = moodAxesByRelease.get(s.id);
+    const hasAuto =
+      axes?.autoApproachability !== null &&
+      axes?.autoApproachability !== undefined &&
+      axes?.autoValence !== null &&
+      axes?.autoValence !== undefined &&
+      axes?.autoDensity !== null &&
+      axes?.autoDensity !== undefined;
+    return {
+      id: s.id,
+      artist: s.artistNames.join(", "),
+      title: s.title,
+      year: s.year,
+      genres: s.genres,
+      styles: s.styles,
+      moodAxes: axes
+        ? { approachability: axes.approachability, valence: axes.valence, density: axes.density }
+        : { approachability: 0, valence: 0, density: 0 },
+      moodAxesSource: axes?.source ?? "seeded",
+      moodAxesAuto: hasAuto
+        ? {
+            approachability: axes!.autoApproachability!,
+            valence: axes!.autoValence!,
+            density: axes!.autoDensity!,
+          }
+        : null,
+    };
+  });
 }
 
 /** Distinct artist names across the collection, for the artist-search

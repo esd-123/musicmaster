@@ -99,6 +99,9 @@ export async function scoreMoodAxes(releaseId: number, input: MoodAxesInput): Pr
     approachability: result.approachability,
     valence: result.valence,
     density: result.density,
+    autoApproachability: result.approachability,
+    autoValence: result.valence,
+    autoDensity: result.density,
   });
   return true;
 }

@@ -30,6 +30,7 @@ export async function PATCH(
     approachability: clamp(approachability),
     valence: clamp(valence),
     density: clamp(density),
+    source: "manual" as const,
     updatedAt: new Date().toISOString(),
   };
 
