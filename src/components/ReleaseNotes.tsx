@@ -24,7 +24,7 @@ export function ReleaseNotes({
   }
 
   return (
-    <section className={`mt-10 ${isPending ? "opacity-70" : ""}`}>
+    <section className={isPending ? "opacity-70" : ""}>
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
         Your notes
       </h2>

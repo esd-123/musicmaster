@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getReleaseDetail } from "@/lib/releases";
 import { ReleaseUserPanel } from "@/components/ReleaseUserPanel";
+import { MoodAxesEditor } from "@/components/MoodAxesEditor";
 import { ReleaseTagChips } from "@/components/ReleaseTagChips";
 import { ReleaseNotes } from "@/components/ReleaseNotes";
 import { PlayButton } from "@/components/PlayButton";
@@ -62,7 +63,7 @@ export default async function ReleasePage({
         </div>
 
         <div className="flex flex-1 flex-col">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
             <div>
               <h1 className="text-2xl font-semibold">{release.title}</h1>
               <p className="text-zinc-500">
@@ -75,7 +76,28 @@ export default async function ReleasePage({
                 </p>
               ) : null}
             </div>
-            <PlayButton releaseId={release.id} />
+            <div className="flex shrink-0 flex-col items-center gap-2">
+              <PlayButton releaseId={release.id} />
+              {appleMusicUrl ? (
+                <a
+                  href={appleMusicUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-zinc-500 hover:underline"
+                >
+                  Apple Music ↗
+                </a>
+              ) : youtubeSearchUrl ? (
+                <a
+                  href={youtubeSearchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-zinc-500 hover:underline"
+                >
+                  YouTube ↗
+                </a>
+              ) : null}
+            </div>
           </div>
 
           <hr className="mt-4 border-black/10 dark:border-white/10" />
@@ -90,16 +112,17 @@ export default async function ReleasePage({
             <ReleaseUserPanel
               releaseId={release.id}
               initialRating={release.userData?.rating ?? null}
-              appleMusicUrl={appleMusicUrl}
-              youtubeSearchUrl={youtubeSearchUrl}
             />
           </div>
         </div>
       </div>
 
-      <AboutRecord releaseId={release.id} rows={release.enrichment} />
+      <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <ReleaseNotes releaseId={release.id} initialNotes={release.userData?.notes ?? null} />
+        <MoodAxesEditor releaseId={release.id} initialAxes={release.moodAxes} />
+      </div>
 
-      <ReleaseNotes releaseId={release.id} initialNotes={release.userData?.notes ?? null} />
+      <AboutRecord releaseId={release.id} rows={release.enrichment} />
 
       {release.tracks.length > 0 && (
         <section className="mt-10">

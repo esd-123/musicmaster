@@ -42,16 +42,47 @@ async function upsertArtist(discogsArtistId: number, rawName: string): Promise<n
   return inserted.id;
 }
 
-async function upsertGenreStyle(name: string, kind: "genre" | "style"): Promise<number> {
+async function upsertGenreStyle(name: string, kind: "genre" | "style"): Promise<number | null> {
   const existing = await db.query.genresStyles.findFirst({
     where: and(eq(genresStyles.name, name), eq(genresStyles.kind, kind)),
   });
   if (existing) return existing.id;
-  const [inserted] = await db
-    .insert(genresStyles)
-    .values({ name, kind })
-    .returning({ id: genresStyles.id });
-  return inserted.id;
+
+  // Discogs' native taxonomy and this hierarchy's hand-curated one sometimes
+  // classify the same musical name at a different "level" — in either
+  // direction: e.g. Ambient exists here as a top-level genre but Discogs
+  // tags releases with it as a style, while Latin/Reggae exist here as
+  // styles (under "Latin / Afro / Caribbean") but Discogs tags releases with
+  // them as genres. Prefer an existing entry of the same name under the
+  // *other* kind over minting a duplicate (see "Genre/style hierarchy" in
+  // CLAUDE.md on this exact collision pattern).
+  const otherKind = kind === "genre" ? "style" : "genre";
+  const sameNameOtherKind = await db.query.genresStyles.findFirst({
+    where: and(eq(genresStyles.name, name), eq(genresStyles.kind, otherKind)),
+  });
+  if (sameNameOtherKind) return sameNameOtherKind.id;
+
+  if (kind === "genre") {
+    // The top-level genre list is a small, deliberately hand-curated set
+    // (several genres were split from Discogs' native broader buckets, e.g.
+    // "Folk, World, & Country" -> Folk + Country, "Funk / Soul" -> Funk /
+    // Disco + Soul — see CLAUDE.md) — sync must never mint a new one
+    // unattended. Resolve via /genre-editor, or by hand (e.g. during an
+    // interactive onboarding session, reasoning per-release which existing
+    // split genre(s) actually fit) if a release needs it.
+    console.warn(`[sync] Skipping unrecognized genre "${name}" — no existing hierarchy entry`);
+    return null;
+  }
+
+  // Otherwise this is a genuinely new style. A style row requires a
+  // hand-curated parent_genre_id (see the genres_styles_parent_kind_check
+  // constraint) — sync can't make that judgment call unattended, so it's
+  // skipped rather than inserted parentless, mirroring tagsAndStyles.ts's
+  // "link, never create" rule for styles. Add it via /genre-editor (or
+  // resolve it directly, e.g. during an interactive onboarding session) if
+  // it should be part of the hierarchy.
+  console.warn(`[sync] Skipping unrecognized style "${name}" — no existing hierarchy entry`);
+  return null;
 }
 
 async function replaceReleaseArtists(
@@ -79,11 +110,15 @@ async function replaceReleaseGenresStyles(
   await db.delete(releaseGenresStyles).where(eq(releaseGenresStyles.releaseId, releaseId));
   for (const name of genres) {
     const id = await upsertGenreStyle(name, "genre");
-    await db.insert(releaseGenresStyles).values({ releaseId, genreStyleId: id });
+    if (id !== null) {
+      await db.insert(releaseGenresStyles).values({ releaseId, genreStyleId: id });
+    }
   }
   for (const name of styles) {
     const id = await upsertGenreStyle(name, "style");
-    await db.insert(releaseGenresStyles).values({ releaseId, genreStyleId: id });
+    if (id !== null) {
+      await db.insert(releaseGenresStyles).values({ releaseId, genreStyleId: id });
+    }
   }
 }
 

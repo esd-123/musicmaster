@@ -447,6 +447,10 @@ export async function getReleaseDetail(id: number) {
     .from(enrichmentCache)
     .where(eq(enrichmentCache.releaseId, id));
 
+  const moodAxesRow = await db.query.releaseMoodAxes.findFirst({
+    where: eq(releaseMoodAxes.releaseId, id),
+  });
+
   return {
     ...release,
     ...summary,
@@ -456,5 +460,10 @@ export async function getReleaseDetail(id: number) {
     genreStyleTags: genreStyleRows,
     plays: plays.reverse(), // newest first
     enrichment: enrichmentRows,
+    moodAxes: {
+      approachability: moodAxesRow?.approachability ?? 0,
+      valence: moodAxesRow?.valence ?? 0,
+      density: moodAxesRow?.density ?? 0,
+    },
   };
 }

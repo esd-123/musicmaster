@@ -6,13 +6,9 @@ import { useRouter } from "next/navigation";
 export function ReleaseUserPanel({
   releaseId,
   initialRating,
-  appleMusicUrl,
-  youtubeSearchUrl,
 }: {
   releaseId: number;
   initialRating: number | null;
-  appleMusicUrl: string | null;
-  youtubeSearchUrl: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -105,25 +101,6 @@ export function ReleaseUserPanel({
               </button>
             ))}
           </div>
-          {appleMusicUrl ? (
-            <a
-              href={appleMusicUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-zinc-500 hover:underline"
-            >
-              Apple Music ↗
-            </a>
-          ) : youtubeSearchUrl ? (
-            <a
-              href={youtubeSearchUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-zinc-500 hover:underline"
-            >
-              YouTube ↗
-            </a>
-          ) : null}
         </div>
       </div>
     </section>
